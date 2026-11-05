@@ -1,0 +1,5 @@
+node_modules/
+src/data.generated.js
+wrangler.jsonc
+.wrangler/
+.dev.vars
