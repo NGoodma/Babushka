@@ -30,7 +30,7 @@ test("every old-style day has a greeting, great feasts match fixed", () => {
     days.push(`${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
   }
   assert.deepEqual(Object.keys(HOLIDAYS.fixed).sort(), days);
-  for (const [k, v] of Object.entries(HOLIDAYS.great)) assert.equal(HOLIDAYS.fixed[k], v);
+  for (const [k, v] of Object.entries(HOLIDAYS.great)) assert.deepEqual(HOLIDAYS.fixed[k], v);
 });
 
 test("every day of ten years resolves", () => {
@@ -45,5 +45,11 @@ test("priorities", () => {
   assert.match(greetingFor(HOLIDAYS, "2027-05-02").text, /^Христос воскресе!/);
   assert.deepEqual(greetingFor(HOLIDAYS, "2034-04-07"), { text: "Сегодня Великая пятница", end: "." }); // vs Благовещение
   assert.match(greetingFor(HOLIDAYS, "2026-02-15").text, /^Со Сретением/); // great beats a movable Sunday
-  assert.equal(greetingFor(HOLIDAYS, "2026-11-05").text, "С днём памяти апостола Иакова, брата Господня");
+  assert.equal(greetingFor(HOLIDAYS, "2026-11-05").text, "С днём апостола Иакова, брата Господня");
+});
+
+test("greetings read like a person wrote them: no quotes, no church titles", () => {
+  const texts = [...Object.values(HOLIDAYS.fixed), ...Object.values(HOLIDAYS.movable)].map((v) => v.greeting ?? v);
+  const churchy = /[«»"]|памяти|преподобн|священному|святителя великомучени|равноапостольн|благоверн|Божией Матери|Пресвят|Господн(им|ем)\b/;
+  for (const t of texts) assert.doesNotMatch(t, churchy, t);
 });

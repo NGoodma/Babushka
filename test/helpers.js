@@ -1,5 +1,5 @@
 // Test doubles: D1 on top of SQLite, a recording Telegram, and a recording queue.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 
 class Statement {
@@ -30,7 +30,8 @@ class Statement {
 
 export function fakeD1() {
   const db = new Database(":memory:");
-  db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  const dir = new URL("../migrations/", import.meta.url);
+  for (const f of readdirSync(dir).sort()) db.exec(readFileSync(new URL(f, dir), "utf8"));
   db.queries = 0;
   return { raw: db, prepare: (sql) => (db.queries++, new Statement(db, sql)) };
 }

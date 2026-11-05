@@ -49,8 +49,8 @@ const config = {
   main: "src/index.js",
   compatibility_date: "2026-09-01",
   workers_dev: true,
-  // every 5 min, 10:00-23:55 Moscow (07-20 UTC): slots are 10:00..11:00, later runs catch up anything missed
-  triggers: { crons: ["*/5 7-20 * * *"] },
+  // every 5 min all day: users live in different time zones; each run sends to whoever's local slot has come
+  triggers: { crons: ["*/5 * * * *"] },
   d1_databases: [{ binding: "DB", database_name: name, database_id: dbId, migrations_dir: "migrations" }],
   queues: {
     producers: [{ binding: "SEND_QUEUE", queue }],

@@ -10,10 +10,10 @@ const all = [
 ];
 const problems = [];
 for (const [where, t] of all) {
-  if (/(?:^|! )С [СсЗзШшЖжВв][бвгджзйклмнпрстфхцчшщ]/.test(t) && !t.includes("Введением")) {
+  if (/(?:^|! )С ([СсЗзШшЖж][бвгджзйклмнпрстфхцчшщ]|[Вв][сзт])/.test(t)) {
     problems.push(`${where}: maybe "Со": ${t}`);
   }
-  if (!/^(С|Со|Христос|Сегодня) /.test(t)) problems.push(`${where}: odd start: ${t}`);
+  if (!/^[А-ЯЁ]/.test(t)) problems.push(`${where}: should start with a capital letter: ${t}`);
   if (/[,.! ]$/.test(t)) problems.push(`${where}: bad ending: ${t}`);
 }
 const seen = new Map();

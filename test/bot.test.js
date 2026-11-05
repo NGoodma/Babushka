@@ -16,16 +16,17 @@ test("/start subscribes, greets and sends today's phrase with two buttons", asyn
   assert.equal(u.chat_id, 100);
   assert.equal(u.last_sent, "2026-11-06");
   const [welcome, phrase] = sent(env);
-  assert.match(welcome.text, /Каждый день в 10:00 по Москве/);
-  assert.match(phrase.text, /^Бабуль, привет! С днём иконы Божией Матери «Всех скорбящих Радость»! .+\?$/);
+  assert.match(welcome.text, /Каждый день в 10:00 я пришлю/);
+  assert.match(welcome.text, /по часовому поясу «Москва»/);
+  assert.match(phrase.text, /^Бабуль, привет! С праздником иконы Всех скорбящих радость! .+\?$/);
   assert.equal(phrase.reply_markup.inline_keyboard[0][0].copy_text.text, phrase.text);
   assert.equal(phrase.reply_markup.inline_keyboard[0][1].callback_data, "s");
 });
 
-test("users are spread over 10:00..11:00 in 5 minute steps, the 14th goes back to 10:00", async () => {
+test("users are spread over 10:00..10:55 in 5 minute steps, the 13th goes back to 10:00", async () => {
   const env = makeEnv();
   for (let i = 1; i <= 14; i++) await handleUpdate(env, msg(i, "/start"), NOW);
-  assert.deepEqual(users(env).map((u) => u.slot), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0]);
+  assert.deepEqual(users(env).map((u) => u.slot), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 1]);
   // a gap left by someone who unsubscribed is filled first
   env.DB.raw.prepare("DELETE FROM users WHERE chat_id = 5").run();
   await handleUpdate(env, msg(15, "/start"), NOW);
@@ -38,13 +39,14 @@ test("schedule: each user at their slot, respecting the interval, never twice a 
   add.run(1, 0, 1, "2026-11-05"); // 10:00, daily
   add.run(2, 6, 1, "2026-11-05"); // 10:30, daily
   add.run(3, 0, 3, "2026-11-05"); // every 3 days: next on 11-08
-  add.run(4, 12, 1, null); // 11:00, never got one
+  add.run(4, 11, 1, null); // 10:55, never got one
 
   assert.equal(await runSchedule(env, msk("2026-11-06", "09:55")), 0);
   assert.equal(await runSchedule(env, msk("2026-11-06", "10:00")), 1);
   assert.equal(await runSchedule(env, msk("2026-11-06", "10:05")), 0); // already queued
   assert.equal(await runSchedule(env, msk("2026-11-06", "10:30")), 1);
   assert.equal(await runSchedule(env, msk("2026-11-06", "15:00")), 1); // a late cron still catches up
+  assert.equal(await runSchedule(env, msk("2026-11-06", "23:55")), 0);
   assert.deepEqual(env.SEND_QUEUE.sent.map((m) => m.chat_id), [1, 2, 4]);
   assert.equal(await runSchedule(env, msk("2026-11-08", "10:00")), 2); // user 1 and, finally, user 3
   assert.match(env.SEND_QUEUE.sent[0].text, /^Бабуль, привет! /);
@@ -93,10 +95,10 @@ test("settings: excluding questions, but never all of them", async () => {
   assert.deepEqual(JSON.parse(users(env)[0].excluded), []);
   const { QUESTIONS } = await import("../src/data.generated.js");
   for (const q of QUESTIONS) await handleUpdate(env, tap(100, `q:${q.id}`), NOW);
-  assert.equal(JSON.parse(users(env)[0].excluded).length, 19);
+  assert.equal(JSON.parse(users(env)[0].excluded).length, 13);
   assert.ok(env.tg.some((c) => c.text === "Оставь хотя бы один вопрос"));
   await handleUpdate(env, tap(100, "q:nonsense"), NOW);
-  assert.equal(JSON.parse(users(env)[0].excluded).length, 19);
+  assert.equal(JSON.parse(users(env)[0].excluded).length, 13);
 });
 
 test("back button restores copy + settings for the same text", async () => {
@@ -136,4 +138,35 @@ test("webhook checks Telegram's secret header", async () => {
   assert.equal(users(env).length, 0);
   assert.equal((await worker.fetch(req(await webhookSecret(env.TELEGRAM_BOT_TOKEN)), env)).status, 200);
   assert.equal(users(env).length, 1);
+});
+
+test("schedule follows each user's own time zone and local date", async () => {
+  const env = makeEnv();
+  const add = env.DB.raw.prepare("INSERT INTO users (chat_id, slot, tz, last_sent) VALUES (?, ?, ?, ?)");
+  add.run(1, 0, "Asia/Vladivostok", "2026-11-05"); // UTC+10
+  add.run(2, 0, "America/New_York", "2026-11-05"); // UTC-5 in November
+  add.run(3, 2, "Europe/Moscow", "2026-11-05");
+
+  // 00:00 UTC on Nov 6 = 10:00 in Vladivostok, 19:00 on Nov 5 in New York, 03:00 in Moscow
+  assert.equal(await runSchedule(env, new Date("2026-11-06T00:00:00Z")), 1);
+  assert.equal(users(env).find((u) => u.chat_id === 1).last_sent, "2026-11-06");
+  // 15:00 UTC on Nov 6 = 10:00 in New York, the Moscow user (10:10 slot) is overdue too
+  assert.equal(await runSchedule(env, new Date("2026-11-06T15:00:00Z")), 2);
+  assert.deepEqual(env.SEND_QUEUE.sent.map((m) => m.chat_id), [1, 2, 3]);
+  assert.equal(users(env).find((u) => u.chat_id === 2).last_sent, "2026-11-06");
+  assert.equal(await runSchedule(env, new Date("2026-11-06T20:00:00Z")), 0);
+});
+
+test("settings: time zone picker, no time button", async () => {
+  const env = makeEnv();
+  await handleUpdate(env, msg(100, "/start"), NOW);
+  await handleUpdate(env, tap(100, "s"), NOW);
+  const settings = env.tg.findLast((c) => c.method === "editMessageReplyMarkup").reply_markup.inline_keyboard;
+  assert.deepEqual(settings.map((r) => r[0].callback_data), ["f", "q", "z", "m"]);
+  await handleUpdate(env, tap(100, "z"), NOW);
+  await handleUpdate(env, tap(100, "z:9"), NOW); // Владивосток
+  assert.equal(users(env)[0].tz, "Asia/Vladivostok");
+  assert.ok(env.tg.some((c) => c.text === "Буду присылать в 10:00 по времени «Владивосток»"));
+  await handleUpdate(env, tap(100, "z:999"), NOW);
+  assert.equal(users(env)[0].tz, "Asia/Vladivostok");
 });

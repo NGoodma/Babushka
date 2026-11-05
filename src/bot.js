@@ -5,6 +5,7 @@ import {
   everyKeyboard,
   everyLabel,
   FIRST_SLOT_MINUTES,
+  localNow,
   mainKeyboard,
   phrase,
   pickQuestion,
@@ -13,26 +14,25 @@ import {
   SLOTS,
   settingsKeyboard,
   slotTime,
+  ZONES,
+  zoneKeyboard,
+  zoneLabel,
 } from "./message.js";
 import { callTelegram, TelegramError } from "./telegram.js";
 
 const MAX_PER_RUN = 500; // users enqueued by one cron run; the rest go on the next run (5 min later)
-
-/** Moscow has been UTC+3 all year round since 2014. */
-export function moscowNow(date) {
-  const t = new Date(date.getTime() + 3 * 3600 * 1000);
-  return { iso: t.toISOString().slice(0, 10), minutes: t.getUTCHours() * 60 + t.getUTCMinutes() };
-}
+const MAX_SCANNED = 5000; // users read by one cron run
 
 const tg = (env, method, params) => callTelegram(env.TELEGRAM_BOT_TOKEN, method, params);
 const getUser = (env, chatId) => env.DB.prepare("SELECT * FROM users WHERE chat_id = ?1").bind(chatId).first();
+const daysBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / 86400000;
 
 function phraseFor(user, iso) {
   const question = pickQuestion(QUESTIONS, JSON.parse(user.excluded), user.chat_id, user.sent_count);
   return phrase(greetingFor(HOLIDAYS, iso), question);
 }
 
-/** The least busy slot; ties go to the earliest, so users fill 10:00, 10:05, ... 11:00, then 10:00 again. */
+/** The least busy slot; ties go to the earliest, so users fill 10:00, 10:05, ... 10:55, then 10:00 again. */
 async function freeSlot(env) {
   const { results } = await env.DB.prepare("SELECT slot, COUNT(*) AS n FROM users GROUP BY slot").all();
   const counts = new Array(SLOTS).fill(0);
@@ -40,7 +40,8 @@ async function freeSlot(env) {
   return counts.indexOf(Math.min(...counts));
 }
 
-async function sendPhrase(env, user, iso, { scheduled }) {
+async function sendPhrase(env, user, now, { scheduled }) {
+  const { iso } = localNow(now, user.tz);
   const text = phraseFor(user, iso);
   await tg(env, "sendMessage", { chat_id: user.chat_id, text, reply_markup: mainKeyboard(text) });
   const sql = scheduled
@@ -52,10 +53,9 @@ async function sendPhrase(env, user, iso, { scheduled }) {
 // --- webhook -----------------------------------------------------------------------------
 
 export async function handleUpdate(env, update, now) {
-  if (update.callback_query) return handleCallback(env, update.callback_query);
+  if (update.callback_query) return handleCallback(env, update.callback_query, now);
   const msg = update.message;
   if (!msg || msg.chat?.type !== "private") return;
-  const { iso } = moscowNow(now);
   const chatId = msg.chat.id;
   let user = await getUser(env, chatId);
 
@@ -66,29 +66,30 @@ export async function handleUpdate(env, update, now) {
       user = await getUser(env, chatId);
     }
     await tg(env, "sendMessage", { chat_id: chatId, text: welcomeText(user) });
-    await sendPhrase(env, user, iso, { scheduled: true });
+    await sendPhrase(env, user, now, { scheduled: true });
     return;
   }
   if (!user) {
     await tg(env, "sendMessage", { chat_id: chatId, text: "Чтобы подписаться, нажми /start" });
     return;
   }
-  await sendPhrase(env, user, iso, { scheduled: false }); // any message = one more phrase right now
+  await sendPhrase(env, user, now, { scheduled: false }); // any message = one more phrase right now
 }
 
 function welcomeText(user) {
   return (
     "Привет! Я помогаю не забывать писать бабушке.\n\n" +
-    `${capitalize(everyLabel(user.every))} в ${slotTime(user.slot)} по Москве я пришлю готовое сообщение ` +
+    `${capitalize(everyLabel(user.every))} в ${slotTime(user.slot)} я пришлю готовое сообщение ` +
     "с православным праздником или памятью святого этого дня. Нажми «Скопировать» и отправь его бабушке.\n\n" +
-    "В «Настройках» под сообщением можно выбрать, как часто присылать, и убрать неподходящие вопросы. " +
+    `Время считаю по часовому поясу «${zoneLabel(user.tz)}». Если у тебя другой, поменяй его в «Настройках» ` +
+    "под сообщением. Там же можно выбрать, как часто присылать, и убрать неподходящие вопросы. " +
     "Если захочется ещё одно сообщение, просто напиши мне что угодно.\n\nВот сообщение на сегодня:"
   );
 }
 
 const capitalize = (s) => s[0].toUpperCase() + s.slice(1);
 
-async function handleCallback(env, cq) {
+async function handleCallback(env, cq, now) {
   const chatId = cq.message?.chat?.id;
   const user = chatId && (await getUser(env, chatId));
   if (!user) {
@@ -96,6 +97,8 @@ async function handleCallback(env, cq) {
     return;
   }
   const [action, arg] = (cq.data ?? "").split(":");
+  const set = (column, value) =>
+    env.DB.prepare(`UPDATE users SET ${column} = ?2 WHERE chat_id = ?1`).bind(chatId, value).run();
   let markup = null;
   let toast;
 
@@ -105,7 +108,7 @@ async function handleCallback(env, cq) {
   else if (action === "f") {
     const every = Number(arg);
     if (every >= 1 && every <= 7) {
-      await env.DB.prepare("UPDATE users SET every = ?2 WHERE chat_id = ?1").bind(chatId, every).run();
+      await set("every", every);
       user.every = every;
       toast = `Буду присылать ${everyLabel(every)}`;
     }
@@ -117,11 +120,18 @@ async function handleCallback(env, cq) {
     const next = excluded.includes(arg) ? excluded.filter((id) => id !== arg) : [...excluded, arg];
     if (known && QUESTIONS.some((q) => !next.includes(q.id))) {
       user.excluded = JSON.stringify(next);
-      await env.DB.prepare("UPDATE users SET excluded = ?2 WHERE chat_id = ?1").bind(chatId, user.excluded).run();
+      await set("excluded", user.excluded);
       markup = questionsKeyboard(user, QUESTIONS);
     } else if (known) toast = "Оставь хотя бы один вопрос";
-  } else if (action === "t") {
-    toast = "Время выбирается само: так сообщения расходятся равномерно с 10:00 до 11:00";
+  } else if (action === "z" && !arg) markup = zoneKeyboard(user, now);
+  else if (action === "z") {
+    const zone = ZONES[Number(arg)];
+    if (zone) {
+      await set("tz", zone[1]);
+      user.tz = zone[1];
+      toast = `Буду присылать в ${slotTime(user.slot)} по времени «${zone[0]}»`;
+    }
+    markup = settingsKeyboard(user, QUESTIONS);
   }
 
   await tg(env, "answerCallbackQuery", { callback_query_id: cq.id, ...(toast && { text: toast }) });
@@ -139,25 +149,33 @@ async function handleCallback(env, cq) {
 
 // --- cron: pick who is due and put them into the queue ---------------------------------------
 
-export async function runSchedule(env, now) {
-  const { iso, minutes } = moscowNow(now);
-  const maxSlot = Math.floor((minutes - FIRST_SLOT_MINUTES) / SLOT_STEP);
-  if (maxSlot < 0) return 0;
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM users
-     WHERE slot <= ?1 AND (last_sent IS NULL OR julianday(?2) - julianday(last_sent) >= every)
-     ORDER BY slot LIMIT ${MAX_PER_RUN}`,
-  )
-    .bind(maxSlot, iso)
-    .all();
-  if (!results.length) return 0;
+/** Due = their slot has come in their own time zone and `every` days passed since the last message. */
+export function isDue(user, now) {
+  const { iso, minutes } = localNow(now, user.tz);
+  if (minutes < FIRST_SLOT_MINUTES + SLOT_STEP * user.slot) return false;
+  return user.last_sent === null || daysBetween(user.last_sent, iso) >= user.every;
+}
 
-  const messages = results.map((u) => ({ body: { chat_id: u.chat_id, text: phraseFor(u, iso) } }));
+export async function runSchedule(env, now) {
+  // The furthest-ahead zone (UTC+14) decides the latest date anyone can have; the exact check is in isDue.
+  const latest = new Date(now.getTime() + 14 * 3600 * 1000).toISOString().slice(0, 10);
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM users WHERE last_sent IS NULL OR julianday(?1) - julianday(last_sent) >= every LIMIT ${MAX_SCANNED}`,
+  )
+    .bind(latest)
+    .all();
+  const due = results.filter((u) => isDue(u, now)).slice(0, MAX_PER_RUN);
+  if (!due.length) return 0;
+
+  const marks = due.map((u) => ({ c: u.chat_id, d: localNow(now, u.tz).iso }));
+  const messages = due.map((u, i) => ({ body: { chat_id: u.chat_id, text: phraseFor(u, marks[i].d) } }));
   // Mark first, in one query (free plan allows 50 D1 queries per run): the next run must not pick them again.
   await env.DB.prepare(
-    "UPDATE users SET last_sent = ?1, sent_count = sent_count + 1 WHERE chat_id IN (SELECT value FROM json_each(?2))",
+    `UPDATE users SET sent_count = sent_count + 1,
+       last_sent = (SELECT json_extract(value, '$.d') FROM json_each(?1) WHERE json_extract(value, '$.c') = users.chat_id)
+     WHERE chat_id IN (SELECT json_extract(value, '$.c') FROM json_each(?1))`,
   )
-    .bind(iso, JSON.stringify(results.map((u) => u.chat_id)))
+    .bind(JSON.stringify(marks))
     .run();
   for (let i = 0; i < messages.length; i += 100) await env.SEND_QUEUE.sendBatch(messages.slice(i, i + 100));
   return messages.length;
