@@ -164,9 +164,9 @@ test("settings: time zone picker, no time button", async () => {
   const settings = env.tg.findLast((c) => c.method === "editMessageReplyMarkup").reply_markup.inline_keyboard;
   assert.deepEqual(settings.map((r) => r[0].callback_data), ["f", "q", "z", "m"]);
   await handleUpdate(env, tap(100, "z"), NOW);
-  await handleUpdate(env, tap(100, "z:9"), NOW); // Владивосток
+  await handleUpdate(env, tap(100, "z:Asia/Vladivostok"), NOW);
   assert.equal(users(env)[0].tz, "Asia/Vladivostok");
   assert.ok(env.tg.some((c) => c.text === "Буду присылать в 10:00 по времени «Владивосток»"));
-  await handleUpdate(env, tap(100, "z:999"), NOW);
+  await handleUpdate(env, tap(100, "z:Mars/Olympus"), NOW);
   assert.equal(users(env)[0].tz, "Asia/Vladivostok");
 });

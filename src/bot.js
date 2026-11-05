@@ -125,11 +125,11 @@ async function handleCallback(env, cq, now) {
     } else if (known) toast = "Оставь хотя бы один вопрос";
   } else if (action === "z" && !arg) markup = zoneKeyboard(user, now);
   else if (action === "z") {
-    const zone = ZONES[Number(arg)];
+    const zone = ZONES.find(([, tz]) => tz === arg);
     if (zone) {
       await set("tz", zone[1]);
       user.tz = zone[1];
-      toast = `Буду присылать в ${slotTime(user.slot)} по времени «${zone[0]}»`;
+      toast = `Буду присылать в ${slotTime(user.slot)} по времени «${zoneLabel(zone[1])}»`;
     }
     markup = settingsKeyboard(user, QUESTIONS);
   }

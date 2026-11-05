@@ -60,11 +60,19 @@ test("keyboards: copy + settings, callback_data within 64 bytes", () => {
 
 test("local time in a zone, and the zone picker shows each zone's clock", () => {
   const now = new Date("2026-11-06T07:05:00Z");
-  assert.deepEqual(localNow(now, "Europe/Moscow"), { iso: "2026-11-06", minutes: 10 * 60 + 5 });
-  assert.deepEqual(localNow(now, "America/Los_Angeles"), { iso: "2026-11-05", minutes: 23 * 60 + 5 });
-  assert.deepEqual(localNow(now, "Asia/Kamchatka"), { iso: "2026-11-06", minutes: 19 * 60 + 5 });
+  assert.deepEqual(localNow(now, "Europe/Moscow"), { iso: "2026-11-06", minutes: 10 * 60 + 5, offset: 180 });
+  assert.deepEqual(localNow(now, "America/Los_Angeles"), { iso: "2026-11-05", minutes: 23 * 60 + 5, offset: -480 });
+  assert.deepEqual(localNow(now, "Asia/Kamchatka"), { iso: "2026-11-06", minutes: 19 * 60 + 5, offset: 720 });
   for (const [, tz] of ZONES) assert.ok(localNow(now, tz).iso, tz); // every zone is known to Intl
   const buttons = zoneKeyboard({ tz: "Europe/Moscow" }, now).inline_keyboard.flat();
-  assert.ok(buttons.some((b) => b.text === "✓ Москва · 10:05"));
-  assert.ok(buttons.some((b) => b.text === "Лондон · 7:05"));
+  assert.equal(buttons[0].text, "UTC−10 Гавайи · 21:05");
+  assert.ok(buttons.some((b) => b.text === "✓ UTC+3 Москва, Минск, Стамбул · 10:05"));
+  assert.equal(buttons.at(-1).text, "← Назад");
+});
+
+test("zone picker: exactly one button per hour from UTC-10 to UTC+12, in winter and in summer", () => {
+  for (const d of ["2026-01-15T12:00:00Z", "2026-07-15T12:00:00Z"]) {
+    const offsets = ZONES.map(([, tz]) => localNow(new Date(d), tz).offset / 60);
+    assert.deepEqual(offsets, Array.from({ length: 23 }, (_, i) => i - 10), d);
+  }
 });

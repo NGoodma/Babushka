@@ -4,37 +4,38 @@ export const SLOTS = 12; // 10:00, 10:05, ..., 10:55 in the user's time zone
 export const FIRST_SLOT_MINUTES = 10 * 60;
 export const SLOT_STEP = 5;
 
-// Time zones offered in settings. Append only: the picker refers to them by index.
+// Time zones offered in settings: one button per whole-hour offset, west to east.
+// Each offset uses a zone WITHOUT daylight saving time, so no two buttons ever show the same time.
+// (Users in countries with summer time pick by their clock; after the switch they are an hour off.)
+// The first city is the short name shown in settings.
 export const ZONES = [
+  ["Гавайи", "Pacific/Honolulu"],
+  ["Аляска", "Pacific/Gambier"],
+  ["Лос-Анджелес, Ванкувер", "Pacific/Pitcairn"],
+  ["Денвер, Финикс", "America/Phoenix"],
+  ["Чикаго, Мехико", "America/Mexico_City"],
+  ["Нью-Йорк, Торонто, Богота", "America/Bogota"],
+  ["Каракас, Ла-Пас", "America/Caracas"],
+  ["Буэнос-Айрес, Сан-Паулу", "America/Sao_Paulo"],
+  ["Фернанду-ди-Норонья", "America/Noronha"],
+  ["Азорские острова, Кабо-Верде", "Atlantic/Cape_Verde"],
+  ["Лондон, Лиссабон, Рейкьявик", "Atlantic/Reykjavik"],
+  ["Берлин, Париж, Белград", "Africa/Lagos"],
   ["Калининград", "Europe/Kaliningrad"],
-  ["Москва", "Europe/Moscow"],
-  ["Самара", "Europe/Samara"],
-  ["Екатеринбург", "Asia/Yekaterinburg"],
-  ["Омск", "Asia/Omsk"],
-  ["Новосибирск", "Asia/Novosibirsk"],
-  ["Красноярск", "Asia/Krasnoyarsk"],
-  ["Иркутск", "Asia/Irkutsk"],
-  ["Якутск", "Asia/Yakutsk"],
-  ["Владивосток", "Asia/Vladivostok"],
+  ["Москва, Минск, Стамбул", "Europe/Moscow"],
+  ["Самара, Тбилиси, Ереван, Дубай", "Europe/Samara"],
+  ["Екатеринбург, Ташкент, Алматы", "Asia/Yekaterinburg"],
+  ["Омск, Бишкек", "Asia/Omsk"],
+  ["Новосибирск, Красноярск, Бангкок", "Asia/Novosibirsk"],
+  ["Иркутск, Пекин, Сингапур", "Asia/Irkutsk"],
+  ["Якутск, Токио, Сеул", "Asia/Yakutsk"],
+  ["Владивосток, Сидней", "Asia/Vladivostok"],
   ["Магадан", "Asia/Magadan"],
   ["Камчатка", "Asia/Kamchatka"],
-  ["Минск", "Europe/Minsk"],
-  ["Тбилиси", "Asia/Tbilisi"],
-  ["Ереван", "Asia/Yerevan"],
-  ["Алматы", "Asia/Almaty"],
-  ["Ташкент", "Asia/Tashkent"],
-  ["Стамбул", "Europe/Istanbul"],
-  ["Берлин, Париж", "Europe/Berlin"],
-  ["Лондон", "Europe/London"],
-  ["Дубай", "Asia/Dubai"],
-  ["Бангкок", "Asia/Bangkok"],
-  ["Тель-Авив", "Asia/Jerusalem"],
-  ["Нью-Йорк", "America/New_York"],
-  ["Лос-Анджелес", "America/Los_Angeles"],
 ];
 export const DEFAULT_TZ = "Europe/Moscow";
 
-export const zoneLabel = (tz) => ZONES.find(([, z]) => z === tz)?.[0] ?? tz;
+export const zoneLabel = (tz) => ZONES.find(([, z]) => z === tz)?.[0].split(",")[0] ?? tz;
 
 const formatters = new Map();
 /** Local date ("YYYY-MM-DD") and minutes since midnight in a time zone. */
@@ -53,8 +54,17 @@ export function localNow(date, tz) {
     formatters.set(tz, f);
   }
   const p = Object.fromEntries(f.formatToParts(date).map(({ type, value }) => [type, value]));
-  return { iso: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) };
+  const minutes = Number(p.hour) * 60 + Number(p.minute);
+  const localAsUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), 0, minutes);
+  const offset = Math.round((localAsUtc - Math.floor(date.getTime() / 60000) * 60000) / 60000);
+  return { iso: `${p.year}-${p.month}-${p.day}`, minutes, offset };
 }
+
+const utc = (offset) => {
+  const h = Math.floor(Math.abs(offset) / 60);
+  const m = Math.abs(offset) % 60;
+  return `UTC${offset < 0 ? "−" : "+"}${h}${m ? `:${String(m).padStart(2, "0")}` : ""}`;
+};
 
 const hhmm = (minutes) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
 
@@ -123,13 +133,11 @@ export function settingsKeyboard(user, questions) {
   };
 }
 
-/** Each zone shows its current time, so the user just picks the line that matches their clock. */
+/** One button per zone, west to east, each with its offset and current time: pick the one matching your clock. */
 export function zoneKeyboard(user, now) {
-  const items = ZONES.map(([label, tz], i) =>
-    button(`${tz === user.tz ? "✓ " : ""}${label} · ${hhmm(localNow(now, tz).minutes)}`, `z:${i}`),
-  );
-  const rows = [];
-  for (let i = 0; i < items.length; i += 2) rows.push(items.slice(i, i + 2));
+  const rows = ZONES.map(([label, tz]) => ({ label, tz, ...localNow(now, tz) }))
+    .sort((a, b) => a.offset - b.offset) // stable: zones with the same offset keep the list order
+    .map((z) => [button(`${z.tz === user.tz ? "✓ " : ""}${utc(z.offset)} ${z.label} · ${hhmm(z.minutes)}`, `z:${z.tz}`)]);
   return { inline_keyboard: [...rows, back("s")] };
 }
 
