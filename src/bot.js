@@ -66,7 +66,10 @@ export async function handleUpdate(env, update, now) {
       user = await getUser(env, chatId);
     }
     await tg(env, "sendMessage", { chat_id: chatId, text: welcomeText(user) });
-    await sendPhrase(env, user, now, { scheduled: true });
+    // Count it as today's message only if the user's morning slot has already passed:
+    // a /start at 1 a.m. must not swallow the 10 a.m. message.
+    const slotPassed = localNow(now, user.tz).minutes >= FIRST_SLOT_MINUTES + SLOT_STEP * user.slot;
+    await sendPhrase(env, user, now, { scheduled: slotPassed });
     return;
   }
   if (!user) {

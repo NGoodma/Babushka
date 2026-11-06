@@ -23,6 +23,15 @@ test("/start subscribes, greets and sends today's phrase with two buttons", asyn
   assert.equal(phrase.reply_markup.inline_keyboard[0][1].callback_data, "s");
 });
 
+test("/start at night does not swallow the morning message", async () => {
+  const env = makeEnv();
+  await handleUpdate(env, msg(100, "/start"), msk("2026-11-06", "01:00"));
+  assert.equal(users(env)[0].last_sent, null);
+  assert.equal(await runSchedule(env, msk("2026-11-06", "09:55")), 0);
+  assert.equal(await runSchedule(env, msk("2026-11-06", "10:00")), 1);
+  assert.equal(await runSchedule(env, msk("2026-11-06", "15:00")), 0);
+});
+
 test("users are spread over 10:00..10:55 in 5 minute steps, the 13th goes back to 10:00", async () => {
   const env = makeEnv();
   for (let i = 1; i <= 14; i++) await handleUpdate(env, msg(i, "/start"), NOW);
