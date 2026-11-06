@@ -141,12 +141,17 @@ async function handleCallback(env, cq, now) {
   else if (action === "q") {
     const excluded = JSON.parse(user.excluded);
     const known = QUESTIONS.some((q) => q.id === arg);
-    const next = excluded.includes(arg) ? excluded.filter((id) => id !== arg) : [...excluded, arg];
-    if (known && QUESTIONS.some((q) => !next.includes(q.id))) {
+    if (known) {
+      const next = excluded.includes(arg) ? excluded.filter((id) => id !== arg) : [...excluded, arg];
       user.excluded = JSON.stringify(next);
       await set("excluded", user.excluded);
       markup = questionsKeyboard(user, QUESTIONS);
-    } else if (known) toast = "Оставь хотя бы один вопрос";
+    }
+  } else if (action === "qa" && (arg === "on" || arg === "off")) {
+    user.excluded = JSON.stringify(arg === "off" ? QUESTIONS.map((q) => q.id) : []);
+    await set("excluded", user.excluded);
+    markup = questionsKeyboard(user, QUESTIONS);
+    toast = arg === "off" ? "Буду присылать только поздравление" : "Все вопросы включены";
   } else if (action === "z" && !arg) markup = zoneKeyboard(user, now);
   else if (action === "z") {
     const zone = ZONES.find(([, tz]) => tz === arg);

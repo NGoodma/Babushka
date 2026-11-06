@@ -95,7 +95,7 @@ test("settings: frequency", async () => {
   assert.ok(env.tg.some((c) => c.method === "answerCallbackQuery" && c.text === "Буду присылать раз в 3 дня"));
 });
 
-test("settings: excluding questions, but never all of them", async () => {
+test("settings: excluding questions, all of them too", async () => {
   const env = makeEnv();
   await handleUpdate(env, msg(100, "/start"), NOW);
   await handleUpdate(env, tap(100, "q:weather"), NOW);
@@ -104,10 +104,30 @@ test("settings: excluding questions, but never all of them", async () => {
   assert.deepEqual(JSON.parse(users(env)[0].excluded), []);
   const { QUESTIONS } = await import("../src/data.generated.js");
   for (const q of QUESTIONS) await handleUpdate(env, tap(100, `q:${q.id}`), NOW);
-  assert.equal(JSON.parse(users(env)[0].excluded).length, 13);
-  assert.ok(env.tg.some((c) => c.text === "Оставь хотя бы один вопрос"));
+  assert.equal(JSON.parse(users(env)[0].excluded).length, 14);
   await handleUpdate(env, tap(100, "q:nonsense"), NOW);
-  assert.equal(JSON.parse(users(env)[0].excluded).length, 13);
+  assert.equal(JSON.parse(users(env)[0].excluded).length, 14);
+  // with no questions the message is just the greeting
+  env.tg.length = 0;
+  await handleUpdate(env, msg(100, "ещё"), NOW);
+  const sent = env.tg.find((c) => c.method === "sendMessage");
+  assert.ok(QUESTIONS.every((q) => !sent.text.includes(q.text)));
+  assert.match(sent.text, /^Бабуль, привет! .+[!.]$/);
+});
+
+test("settings: turn all questions off and back on", async () => {
+  const env = makeEnv();
+  await handleUpdate(env, msg(100, "/start"), NOW);
+  const { QUESTIONS } = await import("../src/data.generated.js");
+  await handleUpdate(env, tap(100, "q:weather"), NOW);
+  await handleUpdate(env, tap(100, "qa:off"), NOW);
+  assert.equal(JSON.parse(users(env)[0].excluded).length, QUESTIONS.length);
+  let kb = env.tg.filter((c) => c.method === "editMessageReplyMarkup").at(-1).reply_markup.inline_keyboard;
+  assert.equal(kb.at(-2)[0].text, "✅ Включить все");
+  await handleUpdate(env, tap(100, "qa:on"), NOW);
+  assert.deepEqual(JSON.parse(users(env)[0].excluded), []);
+  kb = env.tg.filter((c) => c.method === "editMessageReplyMarkup").at(-1).reply_markup.inline_keyboard;
+  assert.equal(kb.at(-2)[0].text, "⬜ Отключить все");
 });
 
 test("back button restores copy + settings for the same text", async () => {

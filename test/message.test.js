@@ -15,6 +15,7 @@ test("fourteen questions with unique ids", () => {
 
 test("phrase format", () => {
   assert.equal(phrase({ text: "С Покровом", end: "!" }, "Как ты?"), "Бабуль, привет! С Покровом! Как ты?");
+  assert.equal(phrase({ text: "С Покровом", end: "!" }, null), "Бабуль, привет! С Покровом!");
   assert.equal(phrase({ text: "Сегодня Великая пятница", end: "." }, "Как ты?"),
     "Бабуль, привет! Сегодня Великая пятница. Как ты?");
 });
@@ -55,8 +56,8 @@ test("rotation respects exclusions and shrinks the window when few questions are
   for (let i = 1; i < ids.length; i++) assert.ok(!ids.slice(Math.max(0, i - 2), i).includes(ids[i]));
   // a single question left: it is simply repeated
   assert.deepEqual(new Set(history(5, { excluded: QUESTIONS.slice(1).map((q) => q.id) })), new Set([QUESTIONS[0].id]));
-  // everything excluded -> fall back to all questions instead of crashing
-  assert.ok(pickQuestion(QUESTIONS, QUESTIONS.map((q) => q.id), [], "x").question);
+  // everything excluded -> no question, history untouched
+  assert.deepEqual(pickQuestion(QUESTIONS, QUESTIONS.map((q) => q.id), ["dela"], "x"), { question: null, recent: ["dela"] });
 });
 
 test("history keeps only the last 7 and tolerates removed question ids", () => {
@@ -101,4 +102,12 @@ test("zone picker: exactly one button per hour from UTC-10 to UTC+12, in winter 
     const offsets = ZONES.map(([, tz]) => localNow(new Date(d), tz).offset / 60);
     assert.deepEqual(offsets, Array.from({ length: 23 }, (_, i) => i - 10), d);
   }
+});
+
+test("questions keyboard: 'turn all off' unless every question is already off", () => {
+  const last = (excluded) => questionsKeyboard({ excluded: JSON.stringify(excluded) }, QUESTIONS).inline_keyboard.at(-2)[0];
+  assert.deepEqual(last([]), { text: "⬜ Отключить все", callback_data: "qa:off" });
+  assert.equal(last(["dela", "feel"]).callback_data, "qa:off");
+  assert.equal(last(QUESTIONS.slice(1).map((q) => q.id)).callback_data, "qa:off");
+  assert.deepEqual(last(QUESTIONS.map((q) => q.id)), { text: "✅ Включить все", callback_data: "qa:on" });
 });

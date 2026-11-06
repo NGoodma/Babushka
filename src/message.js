@@ -68,8 +68,9 @@ const utc = (offset) => {
 
 const hhmm = (minutes) => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
 
+/** Without a question (the user turned them all off) the message ends with the greeting. */
 export function phrase(greeting, question) {
-  return `Бабуль, привет! ${greeting.text}${greeting.end} ${question}`;
+  return `Бабуль, привет! ${greeting.text}${greeting.end}${question ? ` ${question}` : ""}`;
 }
 
 // Small deterministic PRNG, so the order depends only on (chat, round) and needs no storage.
@@ -86,18 +87,16 @@ function seededRandom(seed) {
 
 export const NO_REPEAT = 7; // a question is not asked again within this many messages
 
-export function enabledQuestions(questions, excluded) {
-  const left = questions.filter((q) => !excluded.includes(q.id));
-  return left.length ? left : questions; // never leave the user with nothing
-}
+export const enabledQuestions = (questions, excluded) => questions.filter((q) => !excluded.includes(q.id));
 
 /**
  * Random question that is not among the user's last NO_REPEAT ones.
  * If the user left fewer questions on, the window shrinks so there is always a choice.
- * Returns { question, recent } with the updated history.
+ * Returns { question, recent } with the updated history; question is null if all are turned off.
  */
 export function pickQuestion(questions, excluded, recent, seed) {
   const list = enabledQuestions(questions, excluded);
+  if (!list.length) return { question: null, recent };
   const window = Math.min(NO_REPEAT, list.length - 1);
   const blocked = window > 0 ? recent.slice(-window) : [];
   const candidates = list.filter((q) => !blocked.includes(q.id));
@@ -113,7 +112,7 @@ export function everyLabel(n) {
 
 export const slotTime = (slot) => hhmm(FIRST_SLOT_MINUTES + SLOT_STEP * slot);
 
-// --- keyboards (callback_data: m main, s settings, f frequency, q questions, z time zone) -----
+// --- keyboards (callback_data: m main, s settings, f frequency, q questions, qa all questions, z time zone)
 
 const button = (text, data) => ({ text, callback_data: data });
 const back = (to) => [button("← Назад", to)];
@@ -157,6 +156,8 @@ export function questionsKeyboard(user, questions) {
   return {
     inline_keyboard: [
       ...questions.map((q) => [button(`${excluded.includes(q.id) ? "⬜" : "✅"} ${q.text}`, `q:${q.id}`)]),
+      // "all off" while at least one is on; "all on" only when every question is off
+      [enabledQuestions(questions, excluded).length ? button("⬜ Отключить все", "qa:off") : button("✅ Включить все", "qa:on")],
       back("s"),
     ],
   };
