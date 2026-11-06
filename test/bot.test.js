@@ -192,3 +192,21 @@ test("questions do not repeat within 7 messages across all ways of sending", asy
   for (let i = 0; i < texts.length; i++) assert.ok(!texts.slice(Math.max(0, i - 7), i).includes(texts[i]), `${i}`);
   assert.equal(JSON.parse(users(env)[0].recent).length, 7);
 });
+
+test("username and name are saved on /start and refreshed when they change", async () => {
+  const env = makeEnv();
+  const me = { id: 100, username: "babushkin_vnuk", first_name: "Коля", last_name: "Петров" };
+  await handleUpdate(env, msg(100, "/start", me), NOW);
+  let u = users(env)[0];
+  assert.deepEqual([u.username, u.first_name, u.last_name], ["babushkin_vnuk", "Коля", "Петров"]);
+
+  env.DB.raw.queries = 0;
+  await handleUpdate(env, tap(100, "s", "Бабуль, привет!", me), NOW);
+  assert.equal(env.DB.raw.queries, 1); // unchanged profile: no extra write
+
+  await handleUpdate(env, tap(100, "s", "Бабуль, привет!", { ...me, username: "new_login" }), NOW);
+  assert.equal(users(env)[0].username, "new_login");
+  await handleUpdate(env, msg(100, "ещё", { id: 100, first_name: "Коля" }), NOW); // removed username
+  u = users(env)[0];
+  assert.deepEqual([u.username, u.last_name], [null, null]);
+});

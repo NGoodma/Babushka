@@ -59,11 +59,11 @@ export function makeEnv(opts) {
   return { DB: fakeD1(), SEND_QUEUE: fakeQueue(), TELEGRAM_BOT_TOKEN: "123:test", tg: fakeTelegram(opts) };
 }
 
-export const msg = (chatId, text) => ({
-  message: { message_id: 1, chat: { id: chatId, type: "private" }, text },
+export const msg = (chatId, text, from = { id: chatId, first_name: "Тест" }) => ({
+  message: { message_id: 1, chat: { id: chatId, type: "private" }, from, text },
 });
-export const tap = (chatId, data, text = "Бабуль, привет!") => ({
-  callback_query: { id: "cq", data, message: { message_id: 7, chat: { id: chatId }, text } },
+export const tap = (chatId, data, text = "Бабуль, привет!", from = { id: chatId, first_name: "Тест" }) => ({
+  callback_query: { id: "cq", data, from, message: { message_id: 7, chat: { id: chatId }, text } },
 });
 /** Moscow wall clock -> Date */
 export const msk = (iso, hhmm) => new Date(`${iso}T${hhmm}:00+03:00`);

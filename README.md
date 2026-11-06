@@ -48,7 +48,7 @@ test/                  # node:test; D1 подменяется на SQLite (bette
 .github/workflows/deploy.yml
 ```
 
-Таблица `users`: `chat_id`, `slot` (0–11), `tz` (часовой пояс IANA, по умолчанию `Europe/Moscow`), `every` (1–7), `last_sent`, `sent_count`, `excluded` (JSON со списком выключенных id вопросов), `recent` (id последних 7 вопросов).
+Таблица `users`: `chat_id`, `slot` (0–11), `tz` (часовой пояс IANA, по умолчанию `Europe/Moscow`), `every` (1–7), `last_sent`, `sent_count`, `excluded` (JSON со списком выключенных id вопросов), `recent` (id последних 7 вопросов). Ещё `username` (логин без @), `first_name` и `last_name` из профиля Telegram: они обновляются при каждом сообщении или нажатии кнопки.
 
 ### Праздники
 
@@ -60,6 +60,27 @@ test/                  # node:test; D1 подменяется на SQLite (bette
 ### Вопросы
 
 Вопрос выбирается случайно из включённых, но не из последних 7, которые получал этот пользователь. История хранится в поле `recent` (JSON со списком id). Если включено меньше 8 вопросов, окно сужается, чтобы всегда оставался выбор. При одном вопросе он просто повторяется. Выключенные вопросы пропускаются. Если выключить все, бот вернётся к полному списку, но интерфейс выключить последний вопрос и так не даёт. **Не меняй `id`** у существующих вопросов: на них ссылаются настройки пользователей и история.
+
+## Посмотреть подписчиков
+
+Cloudflare → Storage & Databases → D1 → `babushka` → Console:
+
+```sql
+SELECT
+  chat_id,
+  CASE WHEN username IS NULL THEN '' ELSE '@' || username END AS login,
+  trim(coalesce(first_name, '') || ' ' || coalesce(last_name, '')) AS name,
+  tz AS time_zone,
+  printf('%d:%02d', 10 + slot * 5 / 60, slot * 5 % 60) AS send_time,
+  CASE every WHEN 1 THEN 'каждый день' WHEN 7 THEN 'раз в неделю' ELSE 'раз в ' || every || ' дн.' END AS how_often,
+  last_sent,
+  sent_count,
+  excluded AS questions_off,
+  recent AS last_questions,
+  created_at AS subscribed_utc
+FROM users
+ORDER BY created_at;
+```
 
 ## Команды для разработки
 

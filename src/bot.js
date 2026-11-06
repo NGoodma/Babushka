@@ -59,18 +59,31 @@ async function sendPhrase(env, user, now, { scheduled }) {
 
 // --- webhook -----------------------------------------------------------------------------
 
+/** Keep the Telegram profile up to date; writes only when something changed. */
+async function rememberProfile(env, user, from) {
+  if (!user || !from) return;
+  const profile = { username: from.username ?? null, first_name: from.first_name ?? null, last_name: from.last_name ?? null };
+  if (Object.entries(profile).every(([k, v]) => user[k] === v)) return;
+  await env.DB.prepare("UPDATE users SET username = ?2, first_name = ?3, last_name = ?4 WHERE chat_id = ?1")
+    .bind(user.chat_id, profile.username, profile.first_name, profile.last_name)
+    .run();
+  Object.assign(user, profile);
+}
+
 export async function handleUpdate(env, update, now) {
   if (update.callback_query) return handleCallback(env, update.callback_query, now);
   const msg = update.message;
   if (!msg || msg.chat?.type !== "private") return;
   const chatId = msg.chat.id;
   let user = await getUser(env, chatId);
+  await rememberProfile(env, user, msg.from);
 
   if ((msg.text ?? "").startsWith("/start")) {
     if (!user) {
       const slot = await freeSlot(env);
       await env.DB.prepare("INSERT INTO users (chat_id, slot) VALUES (?1, ?2)").bind(chatId, slot).run();
       user = await getUser(env, chatId);
+      await rememberProfile(env, user, msg.from);
     }
     await tg(env, "sendMessage", { chat_id: chatId, text: welcomeText(user) });
     // Count it as today's message only if the user's morning slot has already passed:
@@ -106,6 +119,7 @@ async function handleCallback(env, cq, now) {
     await tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Сначала нажми /start" });
     return;
   }
+  await rememberProfile(env, user, cq.from);
   const [action, arg] = (cq.data ?? "").split(":");
   const set = (column, value) =>
     env.DB.prepare(`UPDATE users SET ${column} = ?2 WHERE chat_id = ?1`).bind(chatId, value).run();
