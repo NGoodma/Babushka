@@ -179,3 +179,16 @@ test("settings: time zone picker, no time button", async () => {
   await handleUpdate(env, tap(100, "z:Mars/Olympus"), NOW);
   assert.equal(users(env)[0].tz, "Asia/Vladivostok");
 });
+
+test("questions do not repeat within 7 messages across all ways of sending", async () => {
+  const env = makeEnv();
+  await handleUpdate(env, msg(100, "/start"), msk("2026-11-06", "12:00"));
+  for (let i = 0; i < 10; i++) await handleUpdate(env, msg(100, "ещё"), NOW); // extra phrases
+  for (let day = 7; day <= 20; day++) await runSchedule(env, msk(`2026-11-${String(day).padStart(2, "0")}`, "10:00")); // scheduled
+  const texts = [...sent(env).map((c) => c.text), ...env.SEND_QUEUE.sent.map((m) => m.text)]
+    .filter((t) => t.startsWith("Бабуль"))
+    .map((t) => t.slice(t.lastIndexOf("! ") + 2));
+  assert.equal(texts.length, 25);
+  for (let i = 0; i < texts.length; i++) assert.ok(!texts.slice(Math.max(0, i - 7), i).includes(texts[i]), `${i}`);
+  assert.equal(JSON.parse(users(env)[0].recent).length, 7);
+});

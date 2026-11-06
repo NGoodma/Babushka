@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { greetingFor, isoFromJdn, jdnFromIso } from "../src/calendar.js";
 import { HOLIDAYS, QUESTIONS } from "../src/data.generated.js";
 import {
-  everyKeyboard, everyLabel, localNow, mainKeyboard, phrase, pickQuestion, questionsKeyboard, settingsKeyboard,
+  everyKeyboard, everyLabel, localNow, mainKeyboard, NO_REPEAT, phrase, pickQuestion, questionsKeyboard, settingsKeyboard,
   slotTime, ZONES, zoneKeyboard,
 } from "../src/message.js";
 
@@ -27,16 +27,42 @@ test("every phrase fits the copy button (256 chars)", () => {
   }
 });
 
-test("rotation: no repeats inside a round, differs per user, respects exclusions", () => {
-  const round = Array.from({ length: 14 }, (_, n) => pickQuestion(QUESTIONS, [], 42, n));
-  assert.equal(new Set(round).size, 14);
-  const other = Array.from({ length: 14 }, (_, n) => pickQuestion(QUESTIONS, [], 43, n));
-  assert.notDeepEqual(round, other);
-  const picks = Array.from({ length: 36 }, (_, n) => pickQuestion(QUESTIONS, ["weather", "city", "gone"], 42, n));
-  assert.ok(!picks.includes("Какая у вас сегодня погода?"));
-  assert.equal(new Set(picks).size, 12);
+/** Simulate n messages for one user; returns the question ids in order. */
+function history(n, { excluded = [], chatId = 42 } = {}) {
+  let recent = [];
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    const picked = pickQuestion(QUESTIONS, excluded, recent, `${chatId}:${i}`);
+    recent = picked.recent;
+    ids.push(recent.at(-1));
+  }
+  return ids;
+}
+
+test("rotation: no question repeats within 7 messages", () => {
+  const ids = history(500);
+  for (let i = 0; i < ids.length; i++) {
+    assert.ok(!ids.slice(Math.max(0, i - NO_REPEAT), i).includes(ids[i]), `repeat at ${i}: ${ids[i]}`);
+  }
+  assert.equal(new Set(ids).size, QUESTIONS.length); // all questions get used
+  assert.notDeepEqual(history(30), history(30, { chatId: 43 })); // users differ
+});
+
+test("rotation respects exclusions and shrinks the window when few questions are left", () => {
+  const few = QUESTIONS.slice(3).map((q) => q.id); // only 3 questions left on
+  const ids = history(60, { excluded: few });
+  assert.deepEqual(new Set(ids), new Set(QUESTIONS.slice(0, 3).map((q) => q.id)));
+  for (let i = 1; i < ids.length; i++) assert.ok(!ids.slice(Math.max(0, i - 2), i).includes(ids[i]));
+  // a single question left: it is simply repeated
+  assert.deepEqual(new Set(history(5, { excluded: QUESTIONS.slice(1).map((q) => q.id) })), new Set([QUESTIONS[0].id]));
   // everything excluded -> fall back to all questions instead of crashing
-  assert.ok(pickQuestion(QUESTIONS, QUESTIONS.map((q) => q.id), 1, 0));
+  assert.ok(pickQuestion(QUESTIONS, QUESTIONS.map((q) => q.id), [], "x").question);
+});
+
+test("history keeps only the last 7 and tolerates removed question ids", () => {
+  const { recent } = pickQuestion(QUESTIONS, [], ["gone1", "gone2", ...QUESTIONS.slice(0, 7).map((q) => q.id)], "s");
+  assert.equal(recent.length, NO_REPEAT);
+  assert.ok(!QUESTIONS.slice(2, 7).map((q) => q.id).includes(recent.at(-1)));
 });
 
 test("labels", () => {

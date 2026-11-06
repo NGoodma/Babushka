@@ -27,9 +27,15 @@ const tg = (env, method, params) => callTelegram(env.TELEGRAM_BOT_TOKEN, method,
 const getUser = (env, chatId) => env.DB.prepare("SELECT * FROM users WHERE chat_id = ?1").bind(chatId).first();
 const daysBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / 86400000;
 
+/** Today's phrase for a user, plus their updated question history (JSON) to store. */
 function phraseFor(user, iso) {
-  const question = pickQuestion(QUESTIONS, JSON.parse(user.excluded), user.chat_id, user.sent_count);
-  return phrase(greetingFor(HOLIDAYS, iso), question);
+  const { question, recent } = pickQuestion(
+    QUESTIONS,
+    JSON.parse(user.excluded),
+    JSON.parse(user.recent),
+    `${user.chat_id}:${user.sent_count}`,
+  );
+  return { text: phrase(greetingFor(HOLIDAYS, iso), question), recent: JSON.stringify(recent) };
 }
 
 /** The least busy slot; ties go to the earliest, so users fill 10:00, 10:05, ... 10:55, then 10:00 again. */
@@ -42,12 +48,13 @@ async function freeSlot(env) {
 
 async function sendPhrase(env, user, now, { scheduled }) {
   const { iso } = localNow(now, user.tz);
-  const text = phraseFor(user, iso);
+  const { text, recent } = phraseFor(user, iso);
   await tg(env, "sendMessage", { chat_id: user.chat_id, text, reply_markup: mainKeyboard(text) });
   const sql = scheduled
-    ? "UPDATE users SET sent_count = sent_count + 1, last_sent = ?2 WHERE chat_id = ?1"
-    : "UPDATE users SET sent_count = sent_count + 1 WHERE chat_id = ?1";
-  await env.DB.prepare(sql).bind(user.chat_id, iso).run();
+    ? "UPDATE users SET sent_count = sent_count + 1, recent = ?3, last_sent = ?2 WHERE chat_id = ?1"
+    : "UPDATE users SET sent_count = sent_count + 1, recent = ?3 WHERE chat_id = ?1";
+  await env.DB.prepare(sql).bind(user.chat_id, iso, recent).run();
+  Object.assign(user, { sent_count: user.sent_count + 1, recent });
 }
 
 // --- webhook -----------------------------------------------------------------------------
@@ -170,12 +177,18 @@ export async function runSchedule(env, now) {
   const due = results.filter((u) => isDue(u, now)).slice(0, MAX_PER_RUN);
   if (!due.length) return 0;
 
-  const marks = due.map((u) => ({ c: u.chat_id, d: localNow(now, u.tz).iso }));
-  const messages = due.map((u, i) => ({ body: { chat_id: u.chat_id, text: phraseFor(u, marks[i].d) } }));
+  const marks = [];
+  const messages = due.map((u) => {
+    const d = localNow(now, u.tz).iso;
+    const { text, recent } = phraseFor(u, d);
+    marks.push({ c: u.chat_id, d, r: recent });
+    return { body: { chat_id: u.chat_id, text } };
+  });
   // Mark first, in one query (free plan allows 50 D1 queries per run): the next run must not pick them again.
   await env.DB.prepare(
     `UPDATE users SET sent_count = sent_count + 1,
-       last_sent = (SELECT json_extract(value, '$.d') FROM json_each(?1) WHERE json_extract(value, '$.c') = users.chat_id)
+       last_sent = (SELECT json_extract(value, '$.d') FROM json_each(?1) WHERE json_extract(value, '$.c') = users.chat_id),
+       recent = (SELECT json_extract(value, '$.r') FROM json_each(?1) WHERE json_extract(value, '$.c') = users.chat_id)
      WHERE chat_id IN (SELECT json_extract(value, '$.c') FROM json_each(?1))`,
   )
     .bind(JSON.stringify(marks))

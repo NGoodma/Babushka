@@ -84,21 +84,25 @@ function seededRandom(seed) {
   };
 }
 
+export const NO_REPEAT = 7; // a question is not asked again within this many messages
+
 export function enabledQuestions(questions, excluded) {
   const left = questions.filter((q) => !excluded.includes(q.id));
   return left.length ? left : questions; // never leave the user with nothing
 }
 
-/** n-th question for a chat: each round is a fresh shuffle, no repeats inside a round. */
-export function pickQuestion(questions, excluded, chatId, n) {
+/**
+ * Random question that is not among the user's last NO_REPEAT ones.
+ * If the user left fewer questions on, the window shrinks so there is always a choice.
+ * Returns { question, recent } with the updated history.
+ */
+export function pickQuestion(questions, excluded, recent, seed) {
   const list = enabledQuestions(questions, excluded);
-  const order = list.map((_, i) => i);
-  const rand = seededRandom(`${chatId}:${Math.floor(n / list.length)}`);
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  return list[order[n % list.length]].text;
+  const window = Math.min(NO_REPEAT, list.length - 1);
+  const blocked = window > 0 ? recent.slice(-window) : [];
+  const candidates = list.filter((q) => !blocked.includes(q.id));
+  const question = candidates[Math.floor(seededRandom(seed)() * candidates.length)];
+  return { question: question.text, recent: [...recent, question.id].slice(-NO_REPEAT) };
 }
 
 export function everyLabel(n) {
